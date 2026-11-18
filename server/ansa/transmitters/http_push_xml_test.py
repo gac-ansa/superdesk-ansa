@@ -82,6 +82,36 @@ class ANSAHTTPPushTestCase(unittest.TestCase):
         copy_media.assert_called_once_with(item, mock.ANY)
         post.assert_called_once()
 
+    def test_xml_skips_empty_renditions(self):
+        """Core sets a crop to None when the picture is replaced, it must not break the push."""
+        item = {
+            "guid": "urn:test",
+            "type": "text",
+            "associations": {
+                "featuremedia": {
+                    "guid": "urn:picture",
+                    "type": "picture",
+                    "renditions": {
+                        "original": {"media": "orig", "mimetype": "image/jpeg"},
+                        "4-3": None,
+                    },
+                    "associations": {"nested": {"guid": "urn:nested", "renditions": {"original": None}}},
+                },
+                "photoGallery--1": None,
+            },
+        }
+        with (
+            mock.patch(POST, return_value=ok_response()) as post,
+            mock.patch.object(self.service, "_get_published_item", return_value=item),
+            mock.patch.object(self.service, "_media_exists", return_value=True) as media_exists,
+        ):
+            # _copy_published_media_files is not mocked here, core file providers get the item
+            self.service._transmit(make_queue_item(XML, assets_url="http://example.com/assets"), {})
+        media_exists.assert_called_once_with("orig", mock.ANY)
+        post.assert_called_once()
+        # published item is not modified
+        self.assertIn("4-3", item["associations"]["featuremedia"]["renditions"])
+
     def test_xml_no_media_lookup_without_assets_url(self):
         with mock.patch(POST, return_value=ok_response()), mock.patch.object(
             self.service, "_get_published_item"

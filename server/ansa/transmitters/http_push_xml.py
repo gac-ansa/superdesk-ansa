@@ -55,6 +55,24 @@ def is_json(formatted_item) -> bool:
     return True
 
 
+def without_empty_renditions(item):
+    """Return a copy of the item without empty renditions, associations included.
+
+    A published item can hold ``None`` renditions: core sets a custom crop to ``None``
+    when the picture in an association is replaced by one which doesn't have it
+    (``flush_renditions``). JSON formatters skip those, but here the item comes
+    straight from the ``published`` collection and core file providers fail on them.
+    """
+    if not isinstance(item, dict):
+        return item
+    cleaned = dict(item)
+    if isinstance(item.get("renditions"), dict):
+        cleaned["renditions"] = {key: rendition for key, rendition in item["renditions"].items() if rendition}
+    if isinstance(item.get("associations"), dict):
+        cleaned["associations"] = {key: without_empty_renditions(assoc) for key, assoc in item["associations"].items()}
+    return cleaned
+
+
 class ANSAHTTPPushService(HTTPPushService):
     NAME = "HTTP Push"
 
@@ -70,7 +88,7 @@ class ANSAHTTPPushService(HTTPPushService):
         if isinstance(assets_url, str) and assets_url.strip():
             item = self._get_published_item(queue_item)
             if item:
-                self._copy_published_media_files(item, destination)
+                self._copy_published_media_files(without_empty_renditions(item), destination)
 
         packaged = destination.get("config", {}).get("packaged", False)
         if queue_item.get(PUBLISHED_IN_PACKAGE) and packaged:
