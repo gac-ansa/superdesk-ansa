@@ -5,6 +5,11 @@ import unittest
 import ansa.vfs as vfs
 import requests_mock
 
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
+
+from requests import HTTPError
+
 UPLOAD_URL = "http://vfs/bdmvfs/rest/uploadfile"
 UPLOAD_RESPONSE = """<?xml version="1.0" encoding="UTF-8"?>
 <files>
@@ -114,6 +119,44 @@ class VFSTestCase(unittest.TestCase):
                 self.media.delete("foo")
                 self.assertEqual(1, len(log.output))
                 self.assertIn("File was removed already from vfs md5=foo", log.output[0])
+
+    def test_http_retries(self):
+        delete_requests = []
+        upload_requests = []
+
+        class VFSHandler(BaseHTTPRequestHandler):
+            def do_DELETE(self):
+                delete_requests.append(self.path)
+                status = 503 if len(delete_requests) == 1 else 200
+                self.send_response(status)
+                self.end_headers()
+                if status == 200:
+                    self.wfile.write(b"<files/>")
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                upload_requests.append(self.path)
+                self.send_response(502 if len(upload_requests) < 4 else 504)
+                self.end_headers()
+
+        # requests_mock replaces the adapter, so use loopback to exercise the retry policy.
+        with HTTPServer(("127.0.0.1", 0), VFSHandler) as server:
+            worker = Thread(target=server.serve_forever)
+            worker.start()
+            try:
+                self.app.config["ANSA_VFS"] = f"http://127.0.0.1:{server.server_port}/"
+                self.media._sess.trust_env = False
+
+                self.assertFalse(self.media.delete("foo"))
+                self.assertEqual(delete_requests, [vfs.DELETE_ENDPOINT % "foo"] * 2)
+
+                with self.assertRaises(HTTPError) as err:
+                    self.media.put(io.BytesIO(b"foo"))
+                self.assertEqual(err.exception.response.status_code, 504)
+                self.assertEqual(upload_requests, [vfs.UPLOAD_ENDPOINT] * 4)
+            finally:
+                server.shutdown()
+                worker.join()
 
     def test_url_for_media(self):
         self.assertEqual(BINARY_URL, self.media.url_for_media("foo", "image/jpeg"))
