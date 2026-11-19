@@ -9,3 +9,4 @@ types-babel
 types-requests
 typing-extensions
 types-pytz
+types-urllib3
