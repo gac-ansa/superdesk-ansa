@@ -12,8 +12,10 @@ from lxml import etree
 from urllib.parse import urljoin
 from flask import current_app as app, json
 from eve.io.media import MediaStorage
+from requests.adapters import HTTPAdapter
 from superdesk.errors import SuperdeskError
 from superdesk.storage import MimetypeMixin
+from urllib3.util import Retry
 
 UPLOAD_ENDPOINT = "/bdmvfs/rest/uploadfile"
 BINARY_ENDPOINT = "/bdmvfs/rest/binfilebymd5/%s"
@@ -70,6 +72,19 @@ class VFSMediaStorage(MediaStorage, MimetypeMixin):
     def __init__(self, app=None):
         super().__init__(app)
         self._sess = requests.Session()
+        retries = Retry(
+            total=3,
+            connect=0,
+            read=False,
+            other=0,
+            backoff_factor=0.1,
+            status_forcelist=(502, 503, 504),
+            allowed_methods={"DELETE", "POST"},
+            raise_on_status=False,
+            respect_retry_after_header=False,
+        )
+        for scheme in ("http://", "https://"):
+            self._sess.mount(scheme, HTTPAdapter(max_retries=retries))
 
     def url(self, endpoint):
         return urljoin(app.config.get("ANSA_VFS", "http://172.20.14.95:8080/"), endpoint)
